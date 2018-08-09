@@ -1,0 +1,425 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "artifactsLocation": {
+        "type": "string"
+      },
+      "artifactsLocationSasToken": {
+        "type": "securestring"
+      },
+      "dnsName" : {
+        "type": "string"
+      },
+      "new-serverAdminLogin": {
+        "type": "string",
+        "minLength": 1
+      },
+      "new-serverAdminLoginPassword": {
+        "type": "securestring"
+      },
+      "new-databaseName": {
+        "type": "string",
+        "minLength": 1
+      },
+      "new-databaseCollation": {
+        "type": "string",
+        "minLength": 1,
+        "defaultValue": "SQL_Latin1_General_CP1_CS_AS"
+      },
+      "new-databaseEdition": {
+        "type": "string",
+        "defaultValue": "Basic",
+        "allowedValues": [
+          "Basic",
+          "Standard",
+          "Premium"
+        ]
+      },
+      "new-databaseRequestedServiceObjectiveName": {
+        "type": "string",
+        "defaultValue": "Basic",
+        "allowedValues": [
+          "Basic",
+          "S0",
+          "S1",
+          "S2",
+          "P1",
+          "P2",
+          "P3"
+        ],
+        "metadata": {
+          "description": "Describes the performance level for Edition"
+        }
+      }
+    },
+  "variables": {
+    "SONARNSGRule": [
+      {
+        "name": "rdp-internet",
+        "properties": {
+          "description": "Allow RDP",
+          "protocol": "Tcp",
+          "sourcePortRange": "*",
+          "destinationPortRange": "3389",
+          "sourceAddressPrefix": "Internet",
+          "destinationAddressPrefix": "*",
+          "access": "Allow",
+          "priority": 140,
+          "direction": "Inbound"
+        }
+      },
+      {
+        "name": "web-internet",
+        "properties": {
+          "description": "Allow WEB",
+          "protocol": "Tcp",
+          "sourcePortRange": "*",
+          "destinationPortRange": "80",
+          "sourceAddressPrefix": "Internet",
+          "destinationAddressPrefix": "*",
+          "access": "Allow",
+          "priority": 100,
+          "direction": "Inbound"
+        }
+      },
+      {
+        "name": "ssl-internet",
+        "properties": {
+          "description": "Allow WEB",
+          "protocol": "Tcp",
+          "sourcePortRange": "*",
+          "destinationPortRange": "443",
+          "sourceAddressPrefix": "Internet",
+          "destinationAddressPrefix": "*",
+          "access": "Allow",
+          "priority": 120,
+          "direction": "Inbound"
+        }
+      }
+    ],
+    "sonarNSG": "SONARQUBENSG",
+    "storageAccountType": "Standard_LRS",
+    "addressPrefix": "10.0.0.0/16",
+    "subnetName": "Subnet-1",
+    "subnetPrefix": "10.0.0.0/24",
+    "publicIPAddressType": "Dynamic",
+    "subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables ('subnetName'))]",
+    "publicIPAddressID": "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPAddressName'))]",
+    "lbID": "[resourceId('Microsoft.Network/loadBalancers',variables('lbName'))]",
+    "frontEndIPConfigID": "[concat(variables('lbID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]",
+    "lbPoolID": "[concat(variables('lbID'),'/backendAddressPools/BackendPool1')]",
+    "lbProbeID": "[concat(variables('lbID'),'/probes/tcpProbe')]",
+    "adminUsername": "devops",
+    "adminPassword": "DevopsDevops1",
+    "vmNamePrefix": "SonarQubeVM",
+    "imagePublisher": "MicrosoftWindowsServer",
+    "imageOffer": "WindowsServer",
+    "imageSKU": "2016-Datacenter",
+    "lbName": "DevOpsLB",
+    "nicNamePrefix": "DevOpsNIC",
+    "publicIPAddressName": "DevIP",
+    "vnetName": "DevOpsVirtualNET",
+    "vmSize": "Standard_D1_v2",
+    "new-serverName": "[concat('new-server-', uniqueString(resourceGroup().id))]",
+    "archiveFolder": "DSC",
+    "archiveFile": "DSC.zip",
+    "dscURL":  "[concat(parameters('artifactsLocation'),'/',variables('archiveFolder'),'/',variables('archiveFile'))]"
+
+  },
+  "resources": [
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "[variables('sonarNSG')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "[variables('sonarNSG')]"
+      },
+      "properties": {
+        "securityRules": "[variables('SONARNSGRule')]"
+      }
+    },  
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('publicIPAddressName')]",
+      "apiVersion": "2015-05-01-preview",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic",
+        "pipName": {"value": "[parameters('dnsName')]"},
+        "dnsSettings": {
+          "domainNameLabel": "[parameters('dnsName')]"
+        },
+        "publicIpAddressSku": {
+          "value": "Basic"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "name": "[variables('vnetName')]",
+      "apiVersion": "2015-05-01-preview",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('addressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('subnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('subnetPrefix')]",
+              "networkSecurityGroup": {
+                 "id": "[resourceId('Microsoft.Network/networkSecurityGroups',variables('sonarNSG'))]"
+              }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/networkSecurityGroups/', variables('sonarNSG'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[variables('nicNamePrefix')]",
+      "apiVersion": "2015-05-01-preview",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('subnetRef')]"
+              },
+              "loadBalancerBackendAddressPools": [
+                {
+                  "id": "[concat(variables('lbID'), '/backendAddressPools/BackendPool1')]"
+                }
+              ],
+              "loadBalancerInboundNatRules": [
+                {
+                  "id": "[concat(variables('lbID'),'/inboundNatRules/RDP-VM')]"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', variables('vnetName'))]",
+        "[concat('Microsoft.Network/loadBalancers/', variables('lbName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/loadBalancers",
+      "name": "[variables('lbName')]",
+      "apiVersion": "2015-05-01-preview",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "name": "LoadBalancerFrontEnd",
+            "properties": {
+              "publicIPAddress": {
+                "id": "[variables('publicIPAddressID')]"
+              }
+            }
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "BackendPool1"
+          }
+        ],
+        "inboundNatRules": [
+          {
+            "name": "RDP-VM",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[variables('frontEndIPConfigID')]"
+              },
+              "protocol": "tcp",
+              "frontendPort": 443,
+              "backendPort": 3389,
+              "enableFloatingIP": false
+            }
+          }
+        ],
+        "loadBalancingRules": [
+          {
+            "name": "LBRule",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[variables('frontEndIPConfigID')]"
+              },
+              "backendAddressPool": {
+                "id": "[variables('lbPoolID')]"
+              },
+              "protocol": "tcp",
+              "frontendPort": 80,
+              "backendPort": 80,
+              "enableFloatingIP": false,
+              "idleTimeoutInMinutes": 5,
+              "probe": {
+                "id": "[variables('lbProbeID')]"
+              }
+            }
+          }
+        ],
+        "probes": [
+          {
+            "name": "tcpProbe",
+            "properties": {
+              "protocol": "tcp",
+              "port": 80,
+              "intervalInSeconds": 5,
+              "numberOfProbes": 2
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "[variables('vmNamePrefix')]",
+      "apiVersion": "2016-04-30-preview",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/networkInterfaces/',variables('nicNamePrefix'))]",
+        "[concat('Microsoft.Sql/servers/',variables('new-serverName'))]"
+      ],
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[variables('vmSize')]"
+        },
+        "osProfile": {
+          "computerName": "[variables('vmNamePrefix')]",
+          "adminUsername": "[variables('adminUsername')]",
+          "adminPassword": "[variables('adminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('imagePublisher')]",
+            "offer": "[variables('imageOffer')]",
+            "sku": "[variables('imageSKU')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "createOption": "FromImage",
+            "managedDisk": {
+              "storageAccountType": "Standard_LRS"
+            }
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces',variables('nicNamePrefix'))]"
+            }
+          ]
+        },
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": "false"
+          }
+        }
+      },
+      "resources": [ 
+                {
+                    "name": "InstallSonarQube",
+                    "type": "extensions",
+                    "location":  "[resourceGroup().location]",
+                    "apiVersion": "2016-03-30",
+                    "dependsOn": [
+                      "[resourceId('Microsoft.Compute/virtualMachines', variables('vmNamePrefix'))]"
+                    ],
+                    "tags": {
+                      "displayName": "InstallSonaQube"
+                    },
+                    "properties": {
+                      "publisher": "Microsoft.Powershell",
+                      "type": "DSC",
+                      "typeHandlerVersion": "2.9",
+                      "autoUpgradeMinorVersion": true,
+                      "settings": {
+                        "configuration": {
+                          "url": "[parameters('artifactsLocation')]",
+                          "script": "DSC.ps1",
+                          "function": "InstallSonarQube"
+                        },
+                        "configurationArguments": {
+                          "nodeName": "[variables('vmNamePrefix')]",
+                          "databaseServer": "[variables('new-serverName')]",
+                          "databaseName": "[parameters('new-databaseName')]",
+                          "dbAdminName":"[parameters('new-serverAdminLogin')]",
+                          "dbPassword": "[parameters('new-serverAdminLoginPassword')]"
+                        }
+                      },
+                      "protectedSettings": {
+                        "configurationUrlSasToken": "[parameters('artifactsLocationSasToken')]"
+                    }
+                }
+            }
+            ],
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', variables('nicNamePrefix'))]"
+            ]
+        },
+    {
+      "name": "[variables('new-serverName')]",
+      "type": "Microsoft.Sql/servers",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2014-04-01-preview",
+      "dependsOn": [],
+      "tags": {
+        "displayName": "new-server"
+      },
+      "properties": {
+        "administratorLogin": "[parameters('new-serverAdminLogin')]",
+        "administratorLoginPassword": "[parameters('new-serverAdminLoginPassword')]"
+      },
+      "resources": [
+        {
+          "name": "AllowAllWindowsAzureIps",
+          "type": "firewallrules",
+          "location": "[resourceGroup().location]",
+          "apiVersion": "2014-04-01-preview",
+          "dependsOn": [
+            "[resourceId('Microsoft.Sql/servers', variables('new-serverName'))]"
+          ],
+          "properties": {
+            "startIpAddress": "0.0.0.0",
+            "endIpAddress": "0.0.0.0"
+          }
+        },
+        {
+          "name": "[parameters('new-databaseName')]",
+          "type": "databases",
+          "location": "[resourceGroup().location]",
+          "apiVersion": "2014-04-01-preview",
+          "dependsOn": [
+            "[resourceId('Microsoft.Sql/servers', variables('new-serverName'))]"
+          ],
+          "tags": {
+            "displayName": "new-database"
+          },
+          "properties": {
+            "collation": "[parameters('new-databaseCollation')]",
+            "edition": "[parameters('new-databaseEdition')]",
+            "maxSizeBytes": "1073741824",
+            "requestedServiceObjectiveName": "[parameters('new-databaseRequestedServiceObjectiveName')]"
+          }
+        }
+      ]
+    }
+  ]
+}
